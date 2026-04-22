@@ -1,0 +1,39 @@
+apiVersion: vmoperator.vmware.com/v1alpha3
+kind: VirtualMachine
+metadata:
+  name: rke2-1
+  namespace: ns-rancher
+  labels:
+    app: rke2
+    role: server
+spec:
+  className: best-effort-medium
+  imageName: ubuntu-2404-lts-cloud
+  storageClass: vsan-default-storage-policy
+  powerState: PoweredOn
+  network:
+    interfaces:
+      - name: eth0
+        network:
+          name: vm-network
+  volumes:
+    - name: rke2-data
+      persistentVolumeClaim:
+        claimName: rke2-1-data
+  cloudInit:
+    rawCloudConfig:
+      name: cloud-init-rke2-1
+      key: user-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rke2-1-data
+  namespace: ns-rancher
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: vsan-default-storage-policy
+  resources:
+    requests:
+      storage: 100Gi

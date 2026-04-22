@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-init-rke2-1
+  namespace: ns-rancher
+type: Opaque
+stringData:
+  user-data: |
+    #cloud-config
+    hostname: rke2-1
+    manage_etc_hosts: true
+
+    users:
+      - name: rancher
+        groups: sudo
+        shell: /bin/bash
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        ssh_authorized_keys:
+          - ssh-rsa CHANGEME
+
+    package_update: true
+    package_upgrade: true
+    packages:
+      - curl
+      - apt-transport-https
+      - ca-certificates
+      - open-iscsi
+      - nfs-common
+
+    write_files:
+      - path: /etc/sysctl.d/99-kubernetes.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+      - path: /etc/modules-load.d/kubernetes.conf
+        content: |
+          br_netfilter
+          overlay
+      - path: /etc/rancher/rke2/config.yaml
+        content: |
+          write-kubeconfig-mode: "0644"
+          tls-san:
+            - rke2-1
+            - rke2-1.ns-rancher.svc.cluster.local
+
+    runcmd:
+      - modprobe br_netfilter
+      - modprobe overlay
+      - sysctl --system
+      - swapoff -a
+      - sed -i '/swap/d' /etc/fstab
+      - bash /opt/bootstrap-primary.sh
+
+    final_message: "Cloud-init complete. RKE2 bootstrap started."
