@@ -1,0 +1,305 @@
+# ============================================================
+# Rancher RBAC Patterns for Multi-Tenant Kubernetes
+#
+# Structure:
+#   - Global roles define Rancher-level permissions
+#   - Cluster roles scope access per downstream cluster
+#   - Project roles isolate tenants within a cluster
+#   - NetworkPolicies enforce namespace-level network isolation
+#   - ResourceQuotas prevent noisy-neighbor resource contention
+#
+# Apply tenant namespaces and policies to each downstream
+# cluster. Rancher GlobalRoles and ClusterRoleTemplateBindings
+# are applied via the Rancher management cluster.
+# ============================================================
+
+---
+# =========================
+# 1. GLOBAL ROLES (Rancher)
+# =========================
+
+# Restricted admin - can manage clusters but not Rancher settings
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+  name: platform-admin
+rules:
+  - apiGroups: ["management.cattle.io"]
+    resources: ["clusters", "projects", "nodes"]
+    verbs: ["*"]
+  - apiGroups: ["management.cattle.io"]
+    resources: ["settings", "users", "globalroles"]
+    verbs: ["get", "list"]
+
+---
+# Read-only global auditor
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+  name: global-auditor
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+# =========================
+# 2. CLUSTER ROLE TEMPLATES
+# =========================
+
+# Cluster viewer - read-only across all namespaces in a cluster
+apiVersion: management.cattle.io/v3
+kind: ClusterRoleTemplate
+metadata:
+  name: cluster-viewer
+rules:
+  - apiGroups: ["", "apps", "batch", "networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+# Cluster operator - manage workloads but not RBAC or CRDs
+apiVersion: management.cattle.io/v3
+kind: ClusterRoleTemplate
+metadata:
+  name: cluster-operator
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["deployments", "statefulsets", "daemonsets", "jobs", "cronjobs", "pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["*"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+
+---
+# =========================
+# 3. TENANT NAMESPACE & PROJECT ROLES
+# =========================
+
+# Example: Tenant "alpha"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-alpha
+  labels:
+    tenant: alpha
+    managed-by: rancher
+  annotations:
+    field.cattle.io/projectId: "local:p-alpha"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-beta
+  labels:
+    tenant: beta
+    managed-by: rancher
+  annotations:
+    field.cattle.io/projectId: "local:p-beta"
+
+---
+# Tenant admin - full control within their project namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-admin
+  namespace: tenant-alpha
+rules:
+  - apiGroups: ["", "apps", "batch", "networking.k8s.io", "autoscaling"]
+    resources: ["*"]
+    verbs: ["*"]
+
+---
+# Tenant developer - deploy and debug but no secrets or RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-developer
+  namespace: tenant-alpha
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["deployments", "statefulsets", "pods", "pods/log", "pods/exec", "services", "configmaps", "persistentvolumeclaims", "jobs"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+# Tenant read-only
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-viewer
+  namespace: tenant-alpha
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+# =========================
+# 4. ROLE BINDINGS (example)
+# =========================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alpha-admins
+  namespace: tenant-alpha
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant-admin
+subjects:
+  - kind: Group
+    name: alpha-admins
+    apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alpha-developers
+  namespace: tenant-alpha
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant-developer
+subjects:
+  - kind: Group
+    name: alpha-devs
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# =========================
+# 5. NETWORK ISOLATION
+# =========================
+
+# Default deny all ingress within a tenant namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# Allow intra-namespace traffic only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+
+---
+# Allow ingress controller traffic (labeled pods)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+
+---
+# Deny cross-tenant traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-cross-tenant
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tenant: alpha
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              tenant: alpha
+    - to:  # Allow DNS
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to: {}  # Allow external egress
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+---
+# =========================
+# 6. RESOURCE QUOTAS
+# =========================
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-alpha-quota
+  namespace: tenant-alpha
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    persistentvolumeclaims: "20"
+    pods: "50"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-alpha-limits
+  namespace: tenant-alpha
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "4"
+        memory: 8Gi

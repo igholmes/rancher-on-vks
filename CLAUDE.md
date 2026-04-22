@@ -19,6 +19,11 @@ The deployment flow is: **VKS VM Operator** provisions a VM → **cloud-init** c
 | `vm-rke2-1.yaml` | VKS `VirtualMachine` CR + `PersistentVolumeClaim` for the RKE2 server node (namespace: `ns-rancher`) |
 | `cloud-init-rke2-1.yaml` | Kubernetes `Secret` containing cloud-init user-data (user setup, kernel modules, sysctl, swap disable, RKE2 config) |
 | `bootstrap-primary.sh` | Executed by cloud-init `runcmd`; installs RKE2 server, Helm, cert-manager, and Rancher via Helm charts |
+| `pre-install-rke2.sh` | Interactive pre-install: configures kube-vip, RKE2 config with TLS SANs, installs k9s, sets up shell environment |
+| `import-tkg-cluster.sh` | Imports an existing VKS TKG cluster into Rancher management via the Rancher v3 API |
+| `etcd-backup-restore-rke2.sh` | etcd backup/restore/health drill for RKE2 on VCF (`backup`, `restore`, `health` modes) |
+| `rancher-rbac-multi-tenant.yaml` | RBAC patterns for multi-tenant K8s: GlobalRoles, ClusterRoleTemplates, per-tenant Roles, NetworkPolicies, ResourceQuotas |
+| `ansible-patch-rhel-rancher/` | Ansible playbook for rolling RHEL patching of RKE2 nodes with HA (cordon → drain → patch → reboot → uncordon, one node at a time) |
 
 ## Deployment
 

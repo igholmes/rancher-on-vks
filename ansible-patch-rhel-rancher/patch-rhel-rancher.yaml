@@ -1,0 +1,251 @@
+---
+# ============================================================
+# Ansible Playbook: Auto-Patch RHEL Rancher Nodes with HA
+#
+# Patches RKE2 server and agent nodes one at a time to maintain
+# cluster availability. Each node is cordoned, drained, patched,
+# rebooted (if needed), uncordoned, and verified healthy before
+# moving to the next.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini patch-rhel-rancher.yaml
+#   ansible-playbook -i inventory.ini patch-rhel-rancher.yaml --check  # dry run
+#   ansible-playbook -i inventory.ini patch-rhel-rancher.yaml -e reboot_after_patch=false
+# ============================================================
+
+- name: Patch RHEL RKE2 Server Nodes (rolling, one at a time)
+  hosts: rke2_servers
+  serial: 1
+  become: true
+  vars:
+    reboot_after_patch: true
+    drain_timeout: 300
+    reboot_timeout: 600
+    post_reboot_delay: 30
+    health_check_retries: 30
+    health_check_delay: 10
+
+  tasks:
+    - name: Verify cluster health before patching
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} get nodes"
+      register: pre_patch_nodes
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: false
+
+    - name: Display current node status
+      ansible.builtin.debug:
+        msg: "{{ pre_patch_nodes.stdout_lines }}"
+
+    - name: Check etcd cluster health
+      ansible.builtin.command:
+        cmd: >
+          /var/lib/rancher/rke2/bin/etcdctl
+          --endpoints=https://127.0.0.1:2379
+          --cert=/var/lib/rancher/rke2/server/tls/etcd/server-client.crt
+          --key=/var/lib/rancher/rke2/server/tls/etcd/server-client.key
+          --cacert=/var/lib/rancher/rke2/server/tls/etcd/server-ca.crt
+          endpoint health
+      register: etcd_health
+      changed_when: false
+      failed_when: "'is healthy' not in etcd_health.stdout"
+
+    - name: Cordon node
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} cordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Drain node
+      ansible.builtin.command:
+        cmd: >
+          {{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} drain {{ inventory_hostname }}
+          --ignore-daemonsets
+          --delete-emptydir-data
+          --force
+          --timeout={{ drain_timeout }}s
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Update all RHEL packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: true
+      register: patch_result
+
+    - name: Display patched packages
+      ansible.builtin.debug:
+        msg: "Packages updated: {{ patch_result.results | default(['none']) | length }}"
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Check for kernel updates requiring reboot
+      ansible.builtin.command:
+        cmd: needs-restarting -r
+      register: needs_restart
+      changed_when: false
+      failed_when: false
+
+    - name: Reboot node if required
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        post_reboot_delay: "{{ post_reboot_delay }}"
+        msg: "Ansible patching: rebooting for updates"
+      when: >
+        reboot_after_patch | bool and
+        (reboot_required_file.stat.exists or needs_restart.rc != 0)
+
+    - name: Wait for RKE2 server to be ready
+      ansible.builtin.command:
+        cmd: systemctl is-active {{ rke2_service_server }}
+      register: rke2_status
+      until: rke2_status.rc == 0
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      changed_when: false
+
+    - name: Uncordon node
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} uncordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Wait for node to be Ready
+      ansible.builtin.command:
+        cmd: >
+          {{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }}
+          get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      register: node_ready
+      until: node_ready.stdout == "True"
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: false
+
+    - name: Verify etcd health post-patch
+      ansible.builtin.command:
+        cmd: >
+          /var/lib/rancher/rke2/bin/etcdctl
+          --endpoints=https://127.0.0.1:2379
+          --cert=/var/lib/rancher/rke2/server/tls/etcd/server-client.crt
+          --key=/var/lib/rancher/rke2/server/tls/etcd/server-client.key
+          --cacert=/var/lib/rancher/rke2/server/tls/etcd/server-ca.crt
+          endpoint health
+      register: etcd_post_health
+      changed_when: false
+      failed_when: "'is healthy' not in etcd_post_health.stdout"
+
+    - name: Pause between server nodes
+      ansible.builtin.pause:
+        seconds: 30
+        prompt: "Server {{ inventory_hostname }} patched. Waiting before next node..."
+
+- name: Patch RHEL RKE2 Agent Nodes (rolling, one at a time)
+  hosts: rke2_agents
+  serial: 1
+  become: true
+  vars:
+    reboot_after_patch: true
+    drain_timeout: 300
+    reboot_timeout: 600
+    post_reboot_delay: 30
+    health_check_retries: 30
+    health_check_delay: 10
+
+  tasks:
+    - name: Cordon agent node
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} cordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Drain agent node
+      ansible.builtin.command:
+        cmd: >
+          {{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} drain {{ inventory_hostname }}
+          --ignore-daemonsets
+          --delete-emptydir-data
+          --force
+          --timeout={{ drain_timeout }}s
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Update all RHEL packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: true
+      register: patch_result
+
+    - name: Check for kernel updates requiring reboot
+      ansible.builtin.command:
+        cmd: needs-restarting -r
+      register: needs_restart
+      changed_when: false
+      failed_when: false
+
+    - name: Reboot agent node if required
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        post_reboot_delay: "{{ post_reboot_delay }}"
+        msg: "Ansible patching: rebooting for updates"
+      when: >
+        reboot_after_patch | bool and needs_restart.rc != 0
+
+    - name: Wait for RKE2 agent to be ready
+      ansible.builtin.command:
+        cmd: systemctl is-active {{ rke2_service_agent }}
+      register: rke2_agent_status
+      until: rke2_agent_status.rc == 0
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      changed_when: false
+
+    - name: Uncordon agent node
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} uncordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: true
+
+    - name: Wait for agent node to be Ready
+      ansible.builtin.command:
+        cmd: >
+          {{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }}
+          get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      register: node_ready
+      until: node_ready.stdout == "True"
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      delegate_to: "{{ groups['rke2_servers'][0] }}"
+      changed_when: false
+
+- name: Final Cluster Health Report
+  hosts: "{{ groups['rke2_servers'][0] }}"
+  become: true
+  tasks:
+    - name: Show all node statuses
+      ansible.builtin.command:
+        cmd: "{{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }} get nodes -o wide"
+      register: final_nodes
+      changed_when: false
+
+    - name: Display final cluster state
+      ansible.builtin.debug:
+        msg: "{{ final_nodes.stdout_lines }}"
+
+    - name: Check for any NotReady nodes
+      ansible.builtin.command:
+        cmd: >
+          {{ kubectl_bin }} --kubeconfig {{ kubeconfig_path }}
+          get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+      register: node_states
+      changed_when: false
+      failed_when: "'False' in node_states.stdout"
+
+    - name: Patching complete
+      ansible.builtin.debug:
+        msg: "All nodes patched successfully. Cluster is healthy."
