@@ -1,0 +1,54 @@
+# =============================================================================
+# vSphere Connection
+# =============================================================================
+vsphere_server     = "vcsa.example.com"
+vsphere_user       = "administrator@vsphere.local"
+vsphere_password   = "CHANGEME"
+vsphere_datacenter = "Datacenter"
+vsphere_cluster    = "Cluster"
+vsphere_datastore  = "vsanDatastore"
+vsphere_network    = "vm-network"
+# vsphere_resource_pool = "MyResourcePool"  # Leave empty for cluster root
+
+# =============================================================================
+# VM Template
+# =============================================================================
+vm_template = "ubuntu-2404-lts-cloud"
+vm_firmware = "efi"
+
+# =============================================================================
+# VM Specs
+# =============================================================================
+vm_count       = 3
+vm_name_prefix = "rke2"
+vm_cpus        = 4
+vm_memory_mb   = 8192
+vm_disk_size_gb = 100
+
+# =============================================================================
+# Networking
+# =============================================================================
+vm_ips      = ["10.0.1.10", "10.0.1.11", "10.0.1.12"]
+gateway     = "10.0.1.1"
+netmask     = 24
+dns_servers = ["8.8.8.8", "8.8.4.4"]
+domain      = "example.com"
+
+# =============================================================================
+# OS Config
+# =============================================================================
+ssh_user       = "rancher"
+ssh_public_key = "ssh-rsa AAAAB3...CHANGEME...== user@host"
+# vm_hostname_prefix = "node"  # Defaults to vm_name_prefix
+
+# =============================================================================
+# Role Toggle
+# =============================================================================
+is_rancher_node = true  # Set to false for standalone VMs without RKE2 prereqs
+
+# =============================================================================
+# Ansible Integration
+# =============================================================================
+enable_ansible_inventory        = true
+# ansible_hardening_playbook_path = "../day2-operations/ansible-patch-rhel-rancher/patch-rhel-rancher.yaml"
+# run_ansible_on_provision        = false
