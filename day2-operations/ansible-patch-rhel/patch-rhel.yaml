@@ -1,0 +1,145 @@
+---
+# Ansible Automation Platform playbook: RHEL patching with reboot and email report
+#
+# Usage (CLI):
+#   ansible-playbook -i inventory.ini patch-rhel.yaml
+#
+# AAP: Import as a Job Template. Configure email variables via survey or
+#       extra vars. Credentials and inventory are assigned in the template.
+
+- name: Patch RHEL servers
+  hosts: all
+  become: true
+  serial: "{{ patch_serial | default(0) }}"
+
+  vars:
+    reboot_timeout: 600
+    post_reboot_delay: 30
+    email_to: "admin@example.com"
+    email_from: "ansible@example.com"
+    email_subject_prefix: "[RHEL Patching]"
+    email_host: "localhost"
+    email_port: 25
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # Patching
+    # -------------------------------------------------------------------------
+    - name: Record pre-patch kernel version
+      ansible.builtin.command: uname -r
+      register: pre_patch_kernel
+      changed_when: false
+
+    - name: Apply all available updates
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: true
+      register: patch_result
+
+    - name: Record post-patch kernel version
+      ansible.builtin.command: uname -r
+      register: post_patch_kernel
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # Reboot check
+    # -------------------------------------------------------------------------
+    - name: Check if reboot is required
+      ansible.builtin.command: needs-restarting -r
+      register: reboot_check
+      changed_when: false
+      failed_when: reboot_check.rc not in [0, 1]
+
+    - name: Set reboot required fact
+      ansible.builtin.set_fact:
+        reboot_required: "{{ reboot_check.rc == 1 }}"
+
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        post_reboot_delay: "{{ post_reboot_delay }}"
+        msg: "Rebooting after RHEL patching"
+      when: reboot_required | bool
+
+    - name: Record final kernel version after reboot
+      ansible.builtin.command: uname -r
+      register: final_kernel
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # Build per-host result
+    # -------------------------------------------------------------------------
+    - name: Set host patch summary
+      ansible.builtin.set_fact:
+        host_patch_summary:
+          hostname: "{{ inventory_hostname }}"
+          ip: "{{ ansible_host | default(ansible_default_ipv4.address | default('unknown')) }}"
+          status: "{{ 'SUCCESS' if not patch_result.failed | default(false) else 'FAILED' }}"
+          packages_updated: "{{ patch_result.results | default([]) | length }}"
+          reboot_required: "{{ reboot_required }}"
+          rebooted: "{{ reboot_required | bool }}"
+          kernel_before: "{{ pre_patch_kernel.stdout }}"
+          kernel_after: "{{ final_kernel.stdout }}"
+
+# =============================================================================
+# Email report (runs once after all hosts are patched)
+# =============================================================================
+- name: Send patching report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    email_to: "admin@example.com"
+    email_from: "ansible@example.com"
+    email_subject_prefix: "[RHEL Patching]"
+    email_host: "localhost"
+    email_port: 25
+
+  tasks:
+    - name: Aggregate results from all hosts
+      ansible.builtin.set_fact:
+        all_summaries: >-
+          {{ groups['all']
+             | map('extract', hostvars, 'host_patch_summary')
+             | select('defined')
+             | list }}
+
+    - name: Determine overall status
+      ansible.builtin.set_fact:
+        overall_status: >-
+          {{ 'FAILED' if all_summaries | selectattr('status', 'equalto', 'FAILED') | list | length > 0
+             else 'SUCCESS' }}
+
+    - name: Build email body
+      ansible.builtin.set_fact:
+        email_body: |
+          RHEL Patching Report
+          ====================
+          Date: {{ '%Y-%m-%d %H:%M:%S' | strftime }}
+          Overall Status: {{ overall_status }}
+          Hosts Patched: {{ all_summaries | length }}
+
+          Per-Host Details:
+          -----------------
+          {% for host in all_summaries %}
+          Host: {{ host.hostname }} ({{ host.ip }})
+            Status:           {{ host.status }}
+            Packages Updated: {{ host.packages_updated }}
+            Reboot Required:  {{ host.reboot_required }}
+            Rebooted:         {{ host.rebooted }}
+            Kernel Before:    {{ host.kernel_before }}
+            Kernel After:     {{ host.kernel_after }}
+
+          {% endfor %}
+
+    - name: Send patching report email
+      community.general.mail:
+        host: "{{ email_host }}"
+        port: "{{ email_port }}"
+        to: "{{ email_to }}"
+        from: "{{ email_from }}"
+        subject: "{{ email_subject_prefix }} {{ overall_status }} - {{ '%Y-%m-%d' | strftime }}"
+        body: "{{ email_body }}"
+        subtype: plain
