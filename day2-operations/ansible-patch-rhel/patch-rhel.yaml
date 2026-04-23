@@ -135,11 +135,18 @@
           {% endfor %}
 
     - name: Send patching report email
-      community.general.mail:
-        host: "{{ email_host }}"
-        port: "{{ email_port }}"
-        to: "{{ email_to }}"
-        from: "{{ email_from }}"
-        subject: "{{ email_subject_prefix }} {{ overall_status }} - {{ '%Y-%m-%d' | strftime }}"
-        body: "{{ email_body }}"
-        subtype: plain
+      ansible.builtin.shell: |
+        python3 -c "
+        import smtplib
+        from email.mime.text import MIMEText
+
+        body = '''{{ email_body }}'''
+        msg = MIMEText(body, 'plain')
+        msg['Subject'] = '{{ email_subject_prefix }} {{ overall_status }} - {{ '%Y-%m-%d' | strftime }}'
+        msg['From'] = '{{ email_from }}'
+        msg['To'] = '{{ email_to }}'
+
+        with smtplib.SMTP('{{ email_host }}', {{ email_port }}) as server:
+            server.sendmail('{{ email_from }}', '{{ email_to }}', msg.as_string())
+        "
+      changed_when: false
