@@ -1,0 +1,55 @@
+---
+# Placeholder hardening role.
+# Replace with ansible-lockdown/RHEL10-CIS, DISA STIG, or internal profile as applicable.
+
+- name: Update all packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_only: true
+  register: pkg_update
+
+- name: Install baseline hardening & audit tools
+  ansible.builtin.dnf:
+    name:
+      - aide
+      - audit
+      - chrony
+      - firewalld
+      - policycoreutils
+      - rsyslog
+    state: present
+
+- name: Ensure auditd is enabled and running
+  ansible.builtin.service:
+    name: auditd
+    state: started
+    enabled: true
+
+- name: Ensure firewalld is enabled and running
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Ensure chronyd is enabled and running
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: Set SELinux to enforcing
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+
+# --- CIS/STIG placeholder ----------------------------------------------------
+# Drop your benchmark-specific tasks or include the community role here, e.g.:
+#
+# - name: Apply CIS RHEL 10 benchmark
+#   ansible.builtin.include_role:
+#     name: rhel10_cis
+#   vars:
+#     rhel10cis_level_1: true
+#     rhel10cis_level_2: false
+# -----------------------------------------------------------------------------

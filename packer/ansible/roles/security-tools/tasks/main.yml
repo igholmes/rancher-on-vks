@@ -1,0 +1,31 @@
+---
+# Placeholder for endpoint/security agent installation.
+# Replace with your real agent install (CrowdStrike, Nessus, Wazuh, etc.).
+
+- name: Check that agent package URL is set
+  ansible.builtin.fail:
+    msg: "security_agent_package_url is empty — set it in your pkrvars file or disable enable_security_tools"
+  when: security_agent_package_url | length == 0
+
+- name: Install security agent RPM from artifact URL
+  ansible.builtin.dnf:
+    name: "{{ security_agent_package_url }}"
+    state: present
+    disable_gpg_check: true
+  when: security_agent_package_url | length > 0
+
+# --- Enrollment placeholder --------------------------------------------------
+# Agents typically need a one-time enroll with a token. Example:
+#
+# - name: Configure agent with enrollment token
+#   ansible.builtin.command:
+#     cmd: /opt/vendor/agent-cli enroll --token {{ security_agent_token }}
+#   no_log: true
+#   when: security_agent_token | length > 0
+#
+# - name: Ensure agent service is enabled
+#   ansible.builtin.service:
+#     name: vendor-agent
+#     state: started
+#     enabled: true
+# -----------------------------------------------------------------------------

@@ -1,0 +1,15 @@
+# Packer state & artifacts
+.packer.d/
+packer_cache/
+*.log
+manifest.json
+crash.log
+
+# Real varsfiles — only the .example is committed
+*.pkrvars.hcl
+!*.pkrvars.hcl.example
+*.auto.pkrvars.hcl
+
+# Ansible transient state
+*.retry
+.ansible/

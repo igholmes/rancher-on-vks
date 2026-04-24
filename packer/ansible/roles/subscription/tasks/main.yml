@@ -1,0 +1,29 @@
+---
+# Register the build VM to Satellite so dnf can install packages.
+# The cleanup role unregisters at the end so clones don't inherit this consumer ID.
+
+- name: Install Satellite CA consumer RPM
+  ansible.builtin.dnf:
+    name: "{{ satellite_ca_url }}"
+    state: present
+    disable_gpg_check: true
+  when: satellite_ca_url | length > 0
+
+- name: Register system with Satellite via activation key
+  community.general.redhat_subscription:
+    state: present
+    server_hostname: "{{ satellite_server_url | regex_replace('^https?://', '') | regex_replace('/$', '') }}"
+    activationkey: "{{ satellite_activation_key }}"
+    org_id: "{{ satellite_organization }}"
+    force_register: true
+  no_log: true
+  when:
+    - satellite_server_url | length > 0
+    - satellite_activation_key | length > 0
+    - satellite_organization | length > 0
+
+- name: Enable base repositories
+  ansible.builtin.command:
+    cmd: subscription-manager repos --enable=rhel-10-for-x86_64-baseos-rpms --enable=rhel-10-for-x86_64-appstream-rpms
+  changed_when: true
+  failed_when: false

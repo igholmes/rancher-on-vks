@@ -1,0 +1,79 @@
+---
+# Final cleanup so the resulting template produces clean clones.
+# Runs last regardless of other role toggles.
+
+- name: Unregister from Satellite / RHSM
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - subscription-manager unregister
+    - subscription-manager clean
+  changed_when: true
+  failed_when: false
+
+- name: Remove Satellite CA consumer package
+  ansible.builtin.dnf:
+    name: katello-ca-consumer-*
+    state: absent
+  failed_when: false
+
+- name: Clean dnf caches
+  ansible.builtin.command: dnf clean all
+  changed_when: true
+
+- name: Remove dnf proxy override
+  ansible.builtin.file:
+    path: /etc/dnf/dnf.conf.d/99-packer-proxy.conf
+    state: absent
+
+- name: Remove cloud-init instance state (so clones re-seed)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/cloud/instances
+    - /var/lib/cloud/instance
+    - /var/log/cloud-init.log
+    - /var/log/cloud-init-output.log
+
+- name: Remove build-time NetworkManager connection
+  ansible.builtin.file:
+    path: /etc/NetworkManager/system-connections/build-net.nmconnection
+    state: absent
+
+- name: Truncate machine-id (regenerated on first boot)
+  ansible.builtin.copy:
+    dest: /etc/machine-id
+    content: ""
+    mode: "0444"
+
+- name: Remove /var/lib/dbus/machine-id
+  ansible.builtin.file:
+    path: /var/lib/dbus/machine-id
+    state: absent
+
+- name: Remove SSH host keys (regenerated on first boot)
+  ansible.builtin.shell: rm -f /etc/ssh/ssh_host_*
+  changed_when: true
+
+- name: Clear shell history
+  ansible.builtin.shell: |
+    set -eu
+    rm -f /root/.bash_history
+    find /home -maxdepth 2 -name '.bash_history' -delete
+    history -c || true
+  changed_when: true
+
+- name: Remove tmp/log contents
+  ansible.builtin.shell: |
+    set -eu
+    find /tmp /var/tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
+    find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.[0-9]' \) -exec truncate -s 0 {} + || true
+  changed_when: true
+
+- name: Zero free space (optional — speeds up thin-provisioned clones)
+  ansible.builtin.shell: |
+    dd if=/dev/zero of=/EMPTY bs=1M status=none || true
+    rm -f /EMPTY
+    sync
+  changed_when: true
+  failed_when: false

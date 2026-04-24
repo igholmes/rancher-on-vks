@@ -1,0 +1,32 @@
+---
+# Orchestrates: register → harden → install security tools → cleanup.
+# Each role is a placeholder shell; fill in per environment.
+
+- name: Configure RHEL 10 hardened template
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Configure proxy for dnf (if set)
+      ansible.builtin.copy:
+        dest: /etc/dnf/dnf.conf.d/99-packer-proxy.conf
+        content: |
+          [main]
+          proxy={{ https_proxy | default(http_proxy) }}
+        mode: "0644"
+      when:
+        - (http_proxy | default('')) != '' or (https_proxy | default('')) != ''
+
+  roles:
+    - role: subscription
+      when: register_to_satellite | default(true) | bool
+
+    - role: hardening
+      when: enable_hardening | default(true) | bool
+
+    - role: security-tools
+      when: enable_security_tools | default(true) | bool
+
+    # Always runs last — unregisters, resets machine-id, wipes cloud-init state.
+    - role: cleanup

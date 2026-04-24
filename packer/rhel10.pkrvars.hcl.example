@@ -1,0 +1,79 @@
+# =============================================================================
+# vSphere Connection
+# =============================================================================
+vsphere_server              = "vcsa.example.com"
+vsphere_user                = "administrator@vsphere.local"
+vsphere_password            = "CHANGEME"
+vsphere_insecure_connection = true
+vsphere_datacenter          = "CHANGEME-Datacenter"
+vsphere_cluster             = "CHANGEME-Cluster"
+vsphere_datastore           = "CHANGEME-Datastore"
+vsphere_network             = "CHANGEME-PortGroup"
+vsphere_folder              = "Templates/Linux"
+# vsphere_resource_pool     = ""   # Leave empty for cluster root
+
+# =============================================================================
+# Source & Output Templates (rotation: Previous ← Current ← build)
+# =============================================================================
+source_template        = "RHEL10-Gold-Current"
+current_template_name  = "RHEL10-Gold-Current"
+previous_template_name = "RHEL10-Gold-Previous"
+build_vm_name_prefix   = "rhel10-build"
+
+# =============================================================================
+# Build VM Specs
+# =============================================================================
+build_vm_cpus         = 2
+build_vm_memory_mb    = 4096
+build_vm_disk_size_gb = 60
+build_vm_firmware     = "efi"
+
+# =============================================================================
+# Build-Time Networking (static — environment has no DHCP)
+# =============================================================================
+build_ip_address    = "10.0.0.50"            # CHANGEME — reachable from Packer host
+build_netmask_cidr  = 24
+build_gateway       = "10.0.0.1"             # CHANGEME
+build_dns_servers   = ["10.0.0.2", "10.0.0.3"]  # CHANGEME
+build_search_domain = "example.com"           # CHANGEME
+
+# =============================================================================
+# SSH (the gold template has a user — fill these in per environment)
+# =============================================================================
+ssh_username         = "CHANGEME-builder"
+# Use EITHER ssh_password OR ssh_private_key_file
+ssh_password         = "CHANGEME"
+ssh_private_key_file = ""
+# Public key injected via cloud-init for ssh_username during the build
+ssh_public_key       = "ssh-ed25519 AAAA...CHANGEME... builder@packer"
+ssh_timeout          = "20m"
+
+# =============================================================================
+# Red Hat Subscription (Satellite) — unregistered at end so clones get fresh IDs
+# =============================================================================
+register_to_satellite    = true
+satellite_server_url     = "https://satellite.example.com"          # CHANGEME
+satellite_organization   = "CHANGEME-Org"
+satellite_activation_key = "CHANGEME-activation-key"
+satellite_ca_url         = "https://satellite.example.com/pub/katello-ca-consumer-latest.noarch.rpm"
+
+# =============================================================================
+# HTTP Proxy (fill in later for this environment)
+# =============================================================================
+http_proxy  = ""
+https_proxy = ""
+no_proxy    = "localhost,127.0.0.1,.example.com"
+
+# =============================================================================
+# Hardening / Security-Tools
+# =============================================================================
+enable_hardening           = true
+enable_security_tools      = true
+security_agent_package_url = ""   # CHANGEME — e.g. https://artifacts.example.com/agent.rpm
+security_agent_token       = ""   # CHANGEME — agent enrollment token
+
+# =============================================================================
+# Rotation
+# =============================================================================
+rotate_templates = true
+govc_binary      = "govc"
